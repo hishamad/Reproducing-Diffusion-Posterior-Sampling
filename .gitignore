@@ -1,2 +1,6 @@
 data
 models
+__pycache__
+results
+test1
+test2
