@@ -131,10 +131,10 @@ def main():
         mask = generate_mask(X, 256, 128).to(device)
         y = mask * X.to(device)
         y = gaussian_noise(y).requires_grad_()
-        file_path = os.path.join('./results/', f"start/1{str(i).zfill(5)}.png")
+        file_path = os.path.join('./results/', f"start/{str(i).zfill(5)}.png")
         plt.imsave(file_path, clear_img(y))
         result = reverse(x, y, num_timesteps, mask)
-        file_path = os.path.join('./results/', f"final/1{str(i).zfill(5)}.png")
+        file_path = os.path.join('./results/', f"final/{str(i).zfill(5)}.png")
         plt.imsave(file_path, clear_img(result))       
 
 if __name__ == '__main__':
