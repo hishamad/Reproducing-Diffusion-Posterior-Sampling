@@ -141,10 +141,11 @@ def main():
         operator = None
 
     # Specifiy DPS config here
+    
     dps = DPS(num_timesteps=1000, 
-            scale=0.5, 
+            scale=0.5, # Something to note here is that in the paper, if you look at the appendix you will find experiments details which proivde different scale values to the one used in their configs file. I used the one in the configs file.
             noise="gaussian",
-            sigma=0.05,
+            sigma=0.05, 
             lamb=1,
             method=method,
             operator=operator)
