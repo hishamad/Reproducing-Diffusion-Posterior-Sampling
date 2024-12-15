@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from measurement import generate_mask, gaussian_noise, poission_noise, inpainting
+from measurement import generate_mask, gaussian_noise, poission_noise, inpainting, downsample, colorization
 from cifar10_loader import dataloader
 import os 
 import matplotlib.pylab as plt
@@ -115,42 +115,77 @@ def clear_img(x):
 
 def main():
     # Specifiy measurement method
-    method = "inpainting"
+    method = "super_resolution"
     if method == "inpainting":
         operator = inpainting
-    elif method == "":
-        operator = None
+    elif method == "super_resolution":
+        operator = downsample
+    elif method == 'colorization':
+        operator = colorization
     else:
         operator = None
 
-    # Specifiy DPS config here
+    os.makedirs(f'./results/{method}/start/', exist_ok=True)
+    os.makedirs(f'./results/{method}/final/', exist_ok=True)
     
-    dps = DPS(num_timesteps=1000, 
-            scale=1, # Something to note here is that in the paper, if you look at the appendix you will find experiments details which proivde different scale values to the one used in their configs file. I used the one in the configs file.
-            noise="gaussian",
-            sigma=0.05, 
-            lamb=1,
-            method=method,
-            operator=operator)
+        # Experiment configurations for 5 iterations
+    experiments = [
+        {"sigma": 0.05, "scale": 0.1}, # Experiment 1: sigma=0.01
+        {"sigma": 0.05, "scale": 1.0}, # Experiment 1: sigma=0.01
+        {"sigma": 0.05, "scale": 0.3},  # Experiment 2: default
+        {"sigma": 0.05, "scale": 0.5}  # Experiment 3: default
+        # {"sigma": 0.05, "scale": 0.1},  # Experiment 4: default
+        # {"sigma": 0.05, "scale": 0.3},  # Experiment 5: scale=0.1
+    ]
 
-    x = torch.randn([1,3,32,32]).to(device)
-    for i, (X , _) in tqdm(enumerate(dataloader), total=len(dataloader)):
-        x = torch.randn([1,3,32,32]).to(device).requires_grad_()
-        if method == "inpainting":
-            dps.mask = generate_mask(X, 32, 16, 3).to(device)
-            y = dps.operator(X.to(device), dps.mask)
-        else:
-            y = dps.operator(X.to(device), dps.mask)
-        
-        if dps.noise == "gaussian":
-            y = gaussian_noise(y, dps.sigma).requires_grad_()
-        else:
-            y = poission_noise(y, dps.lamb).requires_grad_()
-        file_path = os.path.join('./results/', f"start/{str(i).zfill(5)}.png")
-        plt.imsave(file_path, clear_img(y))
-        result = dps.reverse(x, y)
-        file_path = os.path.join('./results/', f"final/{str(i).zfill(5)}.png")
-        plt.imsave(file_path, clear_img(result))       
+    for exp_idx, config in enumerate(experiments, start=1):
+        sigma = config["sigma"]
+        scale = config["scale"]
+
+        # Format sigma and scale for file naming
+        sigma_str = f"sigma{int(sigma * 1000):03d}"  # Example: 0.01 -> sigma001
+        scale_str = f"scale{int(scale * 100):02d}"   # Example: 0.1 -> scale01
+
+
+        dps = DPS(num_timesteps=1000, 
+                scale=scale, # Something to note here is that in the paper, if you look at the appendix you will find experiments details which proivde different scale values to the one used in their configs file. I used the one in the configs file.
+                noise="gaussian",
+                sigma=sigma, 
+                lamb=1,
+                method=method,
+                operator=operator)
+
+        x = torch.randn([1,3,32,32]).to(device)
+        for i, (X , _) in tqdm(enumerate(dataloader), total=len(dataloader)):
+            if exp_idx < 4:
+                continue
+            x = torch.randn([1,3,32,32]).to(device).requires_grad_()
+            if method == "inpainting": 
+                dps.mask = generate_mask(X, 256, 128).to(device)
+                y = dps.operator(X.to(device), dps.mask)
+            elif method == "super_resolution":
+                # Downsample HR image to create LR input
+                X = X.to(device)
+                y = downsample(X, scale_factor=0.25)
+            elif method == 'colorization':
+                X = X.to(device)
+                y = colorization(X)
+            else:
+                y = dps.operator(X.to(device), dps.mask)
+
+            
+            if dps.noise == "gaussian":
+                y = gaussian_noise(y, dps.sigma).requires_grad_()
+            else:
+                y = poission_noise(y, dps.lamb).requires_grad_()
+            # Save the starting result
+            file_path = os.path.join(f'./results/{method}/start/exp{exp_idx}_{sigma_str}_{scale_str}_{str(i).zfill(5)}.png')
+            plt.imsave(file_path, clear_img(y))
+            
+            # Reconstruct and save the final result
+            result = dps.reverse(x, y)  # Data sent to DPS to reverse it
+            file_path = os.path.join(f'./results/{method}/final/exp{exp_idx}_{sigma_str}_{scale_str}_{str(i).zfill(5)}.png')
+            plt.imsave(file_path, clear_img(result))    
 
 if __name__ == '__main__':
     main()
