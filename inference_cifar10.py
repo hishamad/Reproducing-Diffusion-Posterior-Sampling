@@ -1,33 +1,17 @@
 import torch
-from utils.unet import create_model
 import numpy as np
-from measurement import generate_mask, gaussian_noise, poission_noise, inpainting, GaussianBlurOperator, NonlinearBlurOperator
-from loader import dataloader
+from measurement import generate_mask, gaussian_noise, poission_noise, inpainting, GaussialBlurOperator, NonlinearBlurOperator
+from cifar10_loader import dataloader
 import os 
 import matplotlib.pylab as plt
 from tqdm.auto import tqdm
+from diffusers import DDPMPipeline
+import torch.nn.functional as F
 
-device = torch.device("cpu")  
-print(device)
-model = create_model(   
-                        image_size=256,
-                        num_channels=128,
-                        num_res_blocks=1,
-                        channel_mult="",
-                        learn_sigma=True,
-                        class_cond=False,
-                        use_checkpoint=False,
-                        attention_resolutions=16,
-                        num_heads=4,
-                        num_head_channels=64,
-                        num_heads_upsample=-1,
-                        use_scale_shift_norm=True,
-                        dropout=0,
-                        resblock_updown=True,
-                        use_fp16=False,
-                        use_new_attention_order=False,
-                        model_path='models/ffhq_10m.pt',
-                    ).to(device).eval()
+
+device = torch.device("cuda")  
+model = DDPMPipeline.from_pretrained("google/ddpm-cifar10-32").to(device)
+
 
 print("Model loaded!")
 
@@ -49,6 +33,7 @@ class DPS:
         self.x_0_coeff = (torch.sqrt(self.alpha_i_1) * self.betas) / (1-self.alpha_i)
         posterior_var = self.betas * (1.0 - self.alpha_i_1) / (1.0 - self.alpha_i)
         self.log_post_var = torch.log(torch.cat((posterior_var[1:2], posterior_var[1:])))
+        self.fixed_log_post_var = torch.log(self.betas * (1.0 - self.alpha_i_1) / (1.0 - self.alpha_i))
         self.operator = operator
         self.method = method
         self.mask = None
@@ -89,7 +74,7 @@ class DPS:
                 diff_norm = torch.linalg.norm(y - self.operator.forward(x_0.to(device).to(torch.float32)))
             elif self.method == "nonlinear-blur":
                 diff_norm = torch.linalg.norm(y - self.operator.forward(x_0.to(device).to(torch.float32)))
-            else:              
+            else:
                 diff_norm = torch.linalg.norm(y - self.operator(x_0))
             norm_grad = torch.autograd.grad(outputs=diff_norm, inputs=x_i)[0]
 
@@ -107,18 +92,18 @@ class DPS:
         for i in tqdm(reversed(range(self.num_timesteps)), total=self.num_timesteps, mininterval=30.0):
             t = torch.tensor([i]).to(device)
             x_i = x_i.requires_grad_()
-            s = model(x_i.float(), t)
-            mu, var = torch.split(s, split_size_or_sections=x_i.shape[1], dim=1)
+            s = model.unet(x_i.float(), t).sample
+            mu = s
             x_0 = self.get_x_0(x_i, mu, t)
             x_0 = x_0.clamp(-1, 1)
-            range_var = self.get_range_var(var, t)
-            x_i_1 = self.get_x_i_1(x_i, x_0, range_var, t)
+            var = self.fixed_log_post_var.to(device)[t]
+            x_i_1 = self.get_x_i_1(x_i, x_0, var, t)
             x_i_1 = self.apply_dps(y, x_0, x_i, x_i_1)
             x_i = x_i_1.detach_()
             # remove if you don't want to print every 10 iterations.
-            if i % 10 == 0:
-                file_path = os.path.join('./results/', f"progress/{str(i).zfill(4)}.png")
-                plt.imsave(file_path, clear_img(x_i))
+            # if i % 10 == 0:
+            #     file_path = os.path.join('./results/', f"progress/{str(i).zfill(4)}.png")
+            #     plt.imsave(file_path, clear_img(x_i))
         
         return x_i
 
@@ -140,13 +125,13 @@ def main():
     if method == "inpainting":
         operator = inpainting
     elif method == "gaussian-deblur":
-        operator = GaussianBlurOperator(kernel_size=31, sigma=3.0, device=device)
+        operator = GaussialBlurOperator(kernel_size=31, intensity=3.0, device=device)
     elif method == "nonlinear-blur":
         operator = NonlinearBlurOperator("./bkse/options/generate_blur/default.yml", device=device)
+    elif method == "":
+        operator = None
     else:
         operator = None
-
-    print("Method: ", method)
 
     # Specifiy DPS config here
     
@@ -158,21 +143,19 @@ def main():
             method=method,
             operator=operator)
 
-    x = torch.randn([1,3,256,256]).to(device)
-    # print(dataloader)
-    for i, X in tqdm(enumerate(dataloader), total=len(dataloader)):
-        # print("inside loop")
-        x = torch.randn([1,3,256,256]).to(device).requires_grad_()
+    x = torch.randn([1,3,32,32]).to(device)
+    for i, (X , _) in tqdm(enumerate(dataloader), total=len(dataloader)):
+        # X = F.interpolate(X, size=(32, 32), mode="bilinear", align_corners=False)
+        x = torch.randn([1,3,32,32]).to(device).requires_grad_()
         if method == "inpainting":
-            dps.mask = generate_mask(X, 256, 128).to(device)
+            dps.mask = generate_mask(X, 32, 16, 3).to(device)
             y = dps.operator(X.to(device), dps.mask)
         elif method == "gaussian-deblur":
             y = dps.operator.forward(X.to(device))
         elif method == "nonlinear-blur":
             y = dps.operator.forward(X.to(device))
         else:
-            y = dps.operator(X.to(device), dps.mask)      
-
+            y = dps.operator(X.to(device), dps.mask)
         if dps.noise == "gaussian":
             y = gaussian_noise(y, dps.sigma).requires_grad_()
         else:
