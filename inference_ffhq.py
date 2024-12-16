@@ -1,8 +1,8 @@
 import torch
 from utils.unet import create_model
 import numpy as np
-from measurement import generate_mask, gaussian_noise, poission_noise, inpainting, downsample, colorization
-from loader import dataloader
+from measurement import generate_mask, gaussian_noise, poission_noise, inpainting, downsample, colorization, GaussianBlurOperator, NonlinearBlurOperator
+from ffhq_loader import dataloader
 import os 
 import matplotlib.pylab as plt
 from tqdm.auto import tqdm
@@ -139,6 +139,10 @@ def main():
         operator = downsample
     elif method == 'colorization':
         operator = colorization
+    elif method == "gaussian-deblur":
+        operator = GaussianBlurOperator(kernel_size=31, sigma=3.0, device=device)
+    elif method == "nonlinear-blur":
+        operator = NonlinearBlurOperator("./bkse/options/generate_blur/default.yml", device=device)
     else:
         operator = None
 

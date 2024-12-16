@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from measurement import generate_mask, gaussian_noise, poission_noise, inpainting, downsample, colorization
+from measurement import generate_mask, gaussian_noise, poission_noise, inpainting, downsample, colorization, GaussianBlurOperator, NonlinearBlurOperator
 from cifar10_loader import dataloader
 import os 
 import matplotlib.pylab as plt
@@ -122,6 +122,10 @@ def main():
         operator = downsample
     elif method == 'colorization':
         operator = colorization
+    elif method == "gaussian-deblur":
+        operator = GaussianBlurOperator(kernel_size=31, intensity=3.0, device=device)
+    elif method == "nonlinear-blur":
+        operator = NonlinearBlurOperator("./bkse/options/generate_blur/default.yml", device=device)
     else:
         operator = None
 
